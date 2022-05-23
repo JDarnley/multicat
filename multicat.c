@@ -91,6 +91,7 @@ static uint8_t *pi_pid_cc_table = NULL;
 static uint64_t i_last_pcr_date;
 static uint64_t i_last_pcr = TS_CLOCK_MAX;
 static uint64_t i_pcr_offset;
+static uint32_t rate_adjust_num = 1, rate_adjust_den = 1;
 
 static volatile sig_atomic_t b_die = 0, b_error = 0;
 static uint16_t i_rtp_seqnum;
@@ -129,6 +130,7 @@ static void usage(void)
     msg_Raw( NULL, "    -m: size of the payload chunk, excluding optional RTP header (default 1316)" );
     msg_Raw( NULL, "    -R: size of the optional RTP header (default 12)" );
     msg_Raw( NULL, "    -w: send with RAW (needed for /srcaddr)" );
+    msg_Raw( NULL, "    -z <num/den>: adjust transmission rate from file" );
     exit(EXIT_FAILURE);
 }
 
@@ -476,7 +478,11 @@ static ssize_t file_Read( void *p_buf, size_t i_len )
         b_die = b_error = 1;
         return 0;
     }
-    i_stc = FromSTC( p_aux );
+    __uint128_t temp = FromSTC( p_aux );
+    /* invert the fraction because this is a time value */
+    temp *= rate_adjust_den;
+    temp /= rate_adjust_num;
+    i_stc = temp;
     if ( !i_first_stc ) i_first_stc = i_stc;
 
     return i_ret;
@@ -947,7 +953,8 @@ int main( int i_argc, char **pp_argv )
     sigset_t set;
 
     /* Parse options */
-    while ( (c = getopt( i_argc, pp_argv, "i:l:t:XT:fp:CPs:n:k:d:ar:O:S:uUm:R:wh" )) != -1 )
+    char junk;
+    while ( (c = getopt( i_argc, pp_argv, "i:l:t:XT:fp:CPs:n:k:d:ar:O:S:uUm:R:whz:" )) != -1 )
     {
         switch ( c )
         {
@@ -1047,6 +1054,18 @@ int main( int i_argc, char **pp_argv )
 
         case 'w':
             b_raw_packets = true;
+            break;
+
+        case 'z':
+            if (sscanf(optarg, "%u/%u%c", &rate_adjust_num, &rate_adjust_den, &junk) != 2) {
+                fprintf(stderr, "unable to parse %s as a fraction\n", optarg);
+                return 1;
+            }
+            if (rate_adjust_num == 0 || rate_adjust_den == 0) {
+                fprintf(stderr, "invalid rate adjustment fraction %u/%u\n",
+                        rate_adjust_num, rate_adjust_den);
+                return 1;
+            }
             break;
 
         case 'h':
